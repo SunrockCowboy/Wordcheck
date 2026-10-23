@@ -12,23 +12,21 @@ st.write(
     "Upload een foto van een woordenlijst en laat je dochter direct oefenen!"
 )
 
-# 1. API-sleutel invoeren via de zijbalk
-api_key = st.sidebar.text_input(
-    "Google Gemini API Key",
-    type="password",
-    help="Plak hier je gratis API-key van https://aistudio.google.com/",
-)
-
-if not api_key:
-  st.warning(
-      "Vul aan de linkerkant je Google Gemini API-key in om te beginnen."
+# 1. API-sleutel automatisch inladen via Streamlit Secrets
+try:
+  api_key = st.secrets["GOOGLE_API_KEY"]
+except Exception:
+  st.error(
+      "Geen API-key gevonden in de Streamlit Secrets. Zorg dat je het"
+      " bestand `.streamlit/secrets.toml` hebt aangemaakt met daarin je"
+      ' `GOOGLE_API_KEY = "jouw_sleutel"`!'
   )
   st.stop()
 
 try:
   client = genai.Client(api_key=api_key)
 except Exception as e:
-  st.error(f"Fout bij het maken van verbinding: {e}")
+  st.error(f"Fout bij het maken van verbinding met de API: {e}")
   st.stop()
 
 # 2. Foto uploaden
@@ -75,9 +73,10 @@ if uploaded_file is not None:
 
           st.session_state["woorden"] = woordenlijst
           random.shuffle(st.session_state["woorden"])
+          st.session_state["foute_woorden"] = []
           st.session_state["index"] = 0
           st.session_state["score"] = 0
-          st.session_state["gecontroleerd"] = False
+          st.session_state["ronde"] = 1
           st.success(
               f"Helemaal gelukt! Er zijn {len(woordenlijst)} woorden gevonden."
           )
@@ -87,26 +86,30 @@ if uploaded_file is not None:
               " foto."
           )
 
-# 3. Het directe overhoor-proces
+# 3. Het directe overhoor-proces met herhaling van foute woorden
 if "woorden" in st.session_state and len(st.session_state["woorden"]) > 0:
   index = st.session_state["index"]
   woorden = st.session_state["woorden"]
 
   if index < len(woorden):
+    if st.session_state.get("ronde", 1) > 1:
+      st.info(
+          "🔄 **Herhalingsronde:** We oefenen nu de woorden die je nog even"
+          " fout had!"
+      )
+
     huidig_item = woorden[index]
     st.divider()
     st.subheader(f"Vraag {index + 1} van {len(woorden)}")
 
     st.markdown(f"### Wat is de vertaling van: **{huidig_item['vreemd']}**?")
 
-    # Los invoerveld reageert direct op Enter
     antwoord = st.text_input("Jouw antwoord (druk op Enter):", key=f"input_{index}")
 
     if antwoord:
       juiste_antwoord = huidig_item["nederlands"].strip().lower()
       gegeven_antwoord = antwoord.strip().lower()
 
-      # Directe feedback geven
       if gegeven_antwoord == juiste_antwoord:
         st.success("Goed zo! Dat is helemaal correct! 🎉")
       else:
@@ -115,22 +118,37 @@ if "woorden" in st.session_state and len(st.session_state["woorden"]) > 0:
             f" **{huidig_item['nederlands']}**"
         )
 
-      # Knop om door te gaan naar de volgende vraag
       if st.button("Volgend woord ➡️"):
         if gegeven_antwoord == juiste_antwoord:
           st.session_state["score"] += 1
+        else:
+          if huidig_item not in st.session_state["foute_woorden"]:
+            st.session_state["foute_woorden"].append(huidig_item)
+
         st.session_state["index"] += 1
         st.rerun()
 
   else:
     st.divider()
-    st.success("Klaar met oefenen! 🏆")
-    st.write(
-        f"Je hebt **{st.session_state['score']}** van de"
-        f" **{len(woorden)}** woorden goed beantwoord."
-    )
-    if st.button("Opnieuw oefenen"):
-      random.shuffle(st.session_state["woorden"])
-      st.session_state["index"] = 0
-      st.session_state["score"] = 0
-      st.rerun()
+    if len(st.session_state["foute_woorden"]) > 0:
+      fouten_aantal = len(st.session_state["foute_woorden"])
+      st.warning(
+          f"Je hebt deze ronde afgerond, maar er waren **{fouten_aantal}**"
+          " woorden die je fout had. Die gaan we nu nog een keer oefenen!"
+      )
+      if st.button("Start herhalingsronde 🔄"):
+        st.session_state["woorden"] = st.session_state["foute_woorden"]
+        random.shuffle(st.session_state["woorden"])
+        st.session_state["foute_woorden"] = []
+        st.session_state["index"] = 0
+        st.session_state["ronde"] = st.session_state.get("ronde", 1) + 1
+        st.rerun()
+    else:
+      st.success("Klaar met oefenen! 🏆 Alles is helemaal goed beheerst!")
+      if st.button("Nieuwe lijst / Opnieuw oefenen"):
+        random.shuffle(st.session_state["woorden"])
+        st.session_state["foute_woorden"] = []
+        st.session_state["index"] = 0
+        st.session_state["score"] = 0
+        st.session_state["ronde"] = 1
+        st.rerun()
