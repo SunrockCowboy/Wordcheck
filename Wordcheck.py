@@ -12,18 +12,26 @@ st.write(
     "Upload een foto van een woordenlijst en laat je dochter direct oefenen!"
 )
 
-# Verbinding maken via de veilige Streamlit Secrets (of lokaal)
-try:
-  client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
-except Exception:
-  # Handig voor lokaal testen als je geen secrets.toml hebt ingesteld
-  # (Je kunt hier eventueel tijdelijk je sleutel tussen haakjes zetten als dat nodig is)
-  st.error(
-      "API-key is niet gevonden in de Streamlit Secrets. Stel deze eerst in!"
+# 1. API-sleutel invoeren via de zijbalk
+api_key = st.sidebar.text_input(
+    "Google Gemini API Key",
+    type="password",
+    help="Plak hier je gratis API-key van https://aistudio.google.com/",
+)
+
+if not api_key:
+  st.warning(
+      "Vul aan de linkerkant je Google Gemini API-key in om te beginnen."
   )
   st.stop()
 
-# Foto uploaden
+try:
+  client = genai.Client(api_key=api_key)
+except Exception as e:
+  st.error(f"Fout bij het maken van verbinding: {e}")
+  st.stop()
+
+# 2. Foto uploaden
 uploaded_file = st.file_uploader(
     "Kies een foto van de woordenlijst", type=["jpg", "jpeg", "png"]
 )
@@ -33,10 +41,7 @@ if uploaded_file is not None:
   st.image(image, caption="Geüploade woordenlijst", use_container_width=True)
 
   if st.button("Start met overhoren!"):
-    with st.spinner(
-        "Even geduld, de AI leest de woorden van de foto... (dit duurt enkele"
-        " seconden)"
-    ):
+    with st.spinner("Even geduld, de AI leest de woorden van de foto..."):
       prompt = (
           "Lees alle woordparen van deze foto. Zet ze om in een JSON-formaat"
           ' dat een lijst is van objecten met de sleutels "vreemd" (de te'
@@ -44,7 +49,6 @@ if uploaded_file is not None:
           " JSON terug zonder extra tekst."
       )
 
-      # Slimme lus: probeert het maximaal 3 keer automatisch opnieuw bij drukte
       max_pogingen = 3
       gelukt = False
       response = None
@@ -55,17 +59,12 @@ if uploaded_file is not None:
               model="gemini-3.8-flash", contents=[image, prompt]
           )
           gelukt = True
-          break  # Als het lukken, spring direct uit de lus
+          break
         except Exception as e:
           if poging < max_pogingen - 1:
-            time.sleep(
-                2
-            )  # Wacht 2 seconden en probeer het stilletjes nog een keer
+            time.sleep(2)
           else:
-            st.error(
-                "Het is op dit moment erg druk op de server. Probeer het over"
-                f" een minuutje nog eens. Foutmelding: {e}"
-            )
+            st.error(f"Er ging iets mis bij het uitlezen: {e}")
 
       if gelukt and response:
         try:
@@ -78,16 +77,17 @@ if uploaded_file is not None:
           random.shuffle(st.session_state["woorden"])
           st.session_state["index"] = 0
           st.session_state["score"] = 0
+          st.session_state["gecontroleerd"] = False
           st.success(
               f"Helemaal gelukt! Er zijn {len(woordenlijst)} woorden gevonden."
           )
-        except Exception as parse_error:
+        except Exception:
           st.error(
-              "De AI kon de tekst niet goed omzetten naar een lijst. Probeer"
-              " een scherpere foto te maken."
+              "De AI kon de tekst niet goed omzetten. Probeer een scherpere"
+              " foto."
           )
 
-# Het overhoor-proces
+# 3. Het directe overhoor-proces
 if "woorden" in st.session_state and len(st.session_state["woorden"]) > 0:
   index = st.session_state["index"]
   woorden = st.session_state["woorden"]
@@ -99,25 +99,29 @@ if "woorden" in st.session_state and len(st.session_state["woorden"]) > 0:
 
     st.markdown(f"### Wat is de vertaling van: **{huidig_item['vreemd']}**?")
 
-    with st.form(key=f"antwoord_form_{index}"):
-      antwoord = st.text_input("Jouw antwoord:")
-      submit = st.form_submit_button("Controleren")
+    # Los invoerveld reageert direct op Enter
+    antwoord = st.text_input("Jouw antwoord (druk op Enter):", key=f"input_{index}")
 
-      if submit:
-        if (
-            antwoord.strip().lower()
-            == huidig_item["nederlands"].strip().lower()
-        ):
-          st.success("Goed zo! Dat is correct! 🎉")
+    if antwoord:
+      juiste_antwoord = huidig_item["nederlands"].strip().lower()
+      gegeven_antwoord = antwoord.strip().lower()
+
+      # Directe feedback geven
+      if gegeven_antwoord == juiste_antwoord:
+        st.success("Goed zo! Dat is helemaal correct! 🎉")
+      else:
+        st.error(
+            f"Niet helemaal. Het juiste antwoord is:"
+            f" **{huidig_item['nederlands']}**"
+        )
+
+      # Knop om door te gaan naar de volgende vraag
+      if st.button("Volgend woord ➡️"):
+        if gegeven_antwoord == juiste_antwoord:
           st.session_state["score"] += 1
-        else:
-          st.error(
-              f"Niet helemaal. Het juiste antwoord is:"
-              f" **{huidig_item['nederlands']}**"
-          )
-
         st.session_state["index"] += 1
         st.rerun()
+
   else:
     st.divider()
     st.success("Klaar met oefenen! 🏆")
